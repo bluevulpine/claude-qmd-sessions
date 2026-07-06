@@ -54,7 +54,14 @@ function updateQmd () {
   } catch (e) {
     return
   }
-  lib.runUpdateAndEmbed()
+  if (lib.isEmbedRunning()) return
+  // update+embed can run for minutes; Claude Code cancels hooks at ~60s.
+  // Detach so the hook exits as soon as the transcript conversion is done —
+  // the scheduled launchd refresh is the backstop if this run dies early.
+  try {
+    cp.spawn('/bin/sh', ['-c', 'qmd update && qmd embed'],
+      { detached: true, stdio: 'ignore' }).unref()
+  } catch (e) {}
 }
 
 function handleSessionStart (data, config, sessionId) {
