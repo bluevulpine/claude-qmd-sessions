@@ -4,9 +4,20 @@ const cp = require('child_process')
 
 const CONFIG_PATH = path.join(__dirname, 'config.json')
 
+function expandTilde (p) {
+  if (typeof p !== 'string') return p
+  if (p === '~') return process.env.HOME
+  if (p.indexOf('~/') === 0) return path.join(process.env.HOME, p.slice(2))
+  return p
+}
+
 function readConfig () {
   try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
+    // hooks run with the session's cwd, so a literal "~/..." outputDir would
+    // resolve as a relative path and scatter exports under random project dirs
+    if (cfg && cfg.outputDir) cfg.outputDir = expandTilde(cfg.outputDir)
+    return cfg
   } catch (e) {
     return null
   }
@@ -158,4 +169,4 @@ function loadClaudeMd (cwd) {
   return parts.join('\n\n---\n\n')
 }
 
-module.exports = { readConfig, isEmbedRunning, qmdAvailable, runUpdateAndEmbed, collectRecentTurns, loadClaudeMd }
+module.exports = { readConfig, expandTilde, isEmbedRunning, qmdAvailable, runUpdateAndEmbed, collectRecentTurns, loadClaudeMd }
