@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent template for the qmd-sessions background refresh (macOS only).
+
+  Placeholders substituted at install time (see SKILL.md "Background refresh"):
+    __NODE__      -> absolute path to node       (e.g. $(which node))
+    __SKILL_DIR__ -> this skill's directory       (e.g. $HOME/.claude/skills/qmd-sessions)
+    __HOME__      -> $HOME
+
+  Install:
+    sed -e "s|__NODE__|$(which node)|" \
+        -e "s|__SKILL_DIR__|$HOME/.claude/skills/qmd-sessions|" \
+        -e "s|__HOME__|$HOME|g" \
+        launchd/com.qmd-sessions.refresh.plist.template \
+      > ~/Library/LaunchAgents/com.qmd-sessions.refresh.plist
+    launchctl load ~/Library/LaunchAgents/com.qmd-sessions.refresh.plist
+
+  Trigger a one-off run on demand:
+    launchctl start com.qmd-sessions.refresh
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.qmd-sessions.refresh</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__NODE__</string>
+        <string>__SKILL_DIR__/scheduled-refresh.js</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Covers both Apple Silicon (/opt/homebrew) and Intel (/usr/local) brew prefixes. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- Run every 4 hours. Idle runs are cheap: nothing new means no re-embed. -->
+    <key>StartInterval</key>
+    <integer>14400</integer>
+
+    <!-- Don't fire on every login; the interval handles cadence. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Low-impact background scheduling so embeds don't disturb foreground work. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/qmd-sessions-refresh.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/qmd-sessions-refresh.log</string>
+</dict>
+</plist>

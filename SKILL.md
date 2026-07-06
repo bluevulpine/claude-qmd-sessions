@@ -3,7 +3,7 @@ name: qmd-sessions
 description: Convert Claude Code session transcripts to searchable markdown files for qmd indexing
 disable-model-invocation: true
 argument-hint: [refresh]
-allowed-tools: Bash(node *), Bash(qmd *), Bash(npm *), Bash(which *), Bash(find *), Read, Edit
+allowed-tools: Bash(node *), Bash(qmd *), Bash(npm *), Bash(which *), Bash(find *), Bash(uname *), Bash(launchctl *), Bash(sed *), Bash(mkdir *), Read, Edit
 ---
 
 ## Quick command: refresh
@@ -20,7 +20,7 @@ Convert Claude Code JSONL session transcripts into clean, searchable markdown fi
 
 ## What it does
 
-- Reads all session JSONL files from `~/.claude/projects/`
+- Reads all session JSONL files from `~/.claude/projects/` (plus Desktop app "cowork"/agent-mode transcripts under `~/Library/Application Support/Claude/local-agent-mode-sessions`, grouped under a `cowork` project)
 - Extracts human-readable content: user messages + assistant text responses
 - Implicitly skips tool_use, tool_result, and thinking blocks (only extracts `type: "text"` content blocks)
 - Strips `<system-reminder>` tags from text content
@@ -28,11 +28,13 @@ Convert Claude Code JSONL session transcripts into clean, searchable markdown fi
 - Skips compact (context compaction) files in both session and subagent directories
 - Outputs organized markdown files: `{project}/{date}-{slug}-{id}.md`
 - Idempotent in bulk mode — skips sessions that already have an output file. In `--session` mode, always overwrites with latest content.
-- Two hooks keep indexes current (all synchronous — block until complete):
-  - **PreCompact**: converts current session before context compaction, runs qmd update + embed
-  - **SessionEnd**: final session conversion when session ends, runs qmd update + embed
-- All hooks use `lib.isEmbedRunning()` (`pgrep -f "qmd.*embed"`) before running embed — if another session's embed is already running, skip. The next embed will catch any pending hashes.
-- Shared logic lives in `lib.js`: `readConfig()`, `isEmbedRunning()` (pgrep check), `qmdAvailable()` (which qmd), `runUpdateAndEmbed()` (update then pgrep-gated embed).
+- Two hooks keep indexes current:
+  - **PreCompact**: converts current session before context compaction, then detaches `qmd update && qmd embed`
+  - **SessionEnd**: final session conversion when session ends, then detaches `qmd update && qmd embed`
+- The convert step is synchronous, but update+embed is detached (`spawn(detached).unref()`) so the hook returns before Claude Code's ~60s hook timeout can kill a long-running embed.
+- Hooks skip embed if one is already running (`lib.isEmbedRunning()` / `pgrep -f "qmd.*embed"`); the next embed catches pending hashes.
+- On macOS, a launchd agent runs `scheduled-refresh.js` every 4 hours as a backstop — a full sweep (incl. cowork) + `qmd update` + `qmd embed` — so the index stays current even on days only the Desktop app is used. See Step 4i.
+- Shared logic lives in `lib.js`: `readConfig()` (expands `~` in `outputDir`), `isEmbedRunning()` (pgrep check), `qmdAvailable()` (which qmd), `runUpdateAndEmbed()`, `expandTilde()`.
 
 ## Behavior: prompt for everything
 
@@ -243,3 +245,25 @@ Wait for user acknowledgement before ending.
   - **Known session lookup**: Use `mcp__qmd__get` with the file path or docid.
   ```
   "OK to append?"
+
+#### 4i: Background refresh via launchd (macOS only)
+
+The PreCompact/SessionEnd hooks only convert the **current terminal session**. Desktop app "cowork" transcripts and long-running/resumed sessions are only fully swept by a periodic full refresh. On macOS, a launchd agent can run `scheduled-refresh.js` every 4 hours to keep the index current.
+
+First check the platform: `uname -s`
+- If the result is not `Darwin` (not macOS): "Background refresh via launchd is macOS-only, so I'll skip it. On Linux, schedule `node ~/.claude/skills/qmd-sessions/scheduled-refresh.js` via cron or a systemd timer instead." Then finish.
+- If the result is `Darwin`, check whether the agent is already installed: `launchctl list | grep qmd-sessions.refresh`
+  - If a matching line is found: "Background refresh agent already installed. Trigger a one-off run anytime with `launchctl start com.qmd-sessions.refresh`." Then finish.
+  - If not found: "I'd like to install a launchd agent that runs a full refresh — convert all sessions (incl. Desktop cowork) then `qmd update` + `qmd embed` — every 4 hours. This fills in the template placeholders (`node` path, skill dir, `$HOME`) and loads the agent. OK to install?"
+
+    On approval, run:
+    ```
+    mkdir -p ~/Library/LaunchAgents ~/Library/Logs
+    sed -e "s|__NODE__|$(which node)|" \
+        -e "s|__SKILL_DIR__|$HOME/.claude/skills/qmd-sessions|" \
+        -e "s|__HOME__|$HOME|g" \
+        ~/.claude/skills/qmd-sessions/launchd/com.qmd-sessions.refresh.plist.template \
+      > ~/Library/LaunchAgents/com.qmd-sessions.refresh.plist
+    launchctl load ~/Library/LaunchAgents/com.qmd-sessions.refresh.plist
+    ```
+    Then: "Installed. It runs every 4 hours (idle runs are cheap). Trigger a one-off run on demand with `launchctl start com.qmd-sessions.refresh`; logs go to `~/Library/Logs/qmd-sessions-refresh.log`."
