@@ -20,21 +20,24 @@ The skill walks through all setup interactively — output directory, conversion
 
 ## What it does
 
-1. Reads session JSONL files from `~/.claude/projects/`
+1. Reads session JSONL files from `~/.claude/projects/` **and** Desktop app "cowork"/agent-mode transcripts under `~/Library/Application Support/Claude/local-agent-mode-sessions` (grouped under a `cowork` project)
 2. Extracts user messages + assistant text responses (skips tool_use, tool_result, thinking blocks)
 3. Outputs organized markdown: `{project}/{date}-{slug}-{id}.md`
 4. Indexes in qmd for semantic + keyword search via MCP
+5. Stays current via Claude Code hooks (per session) and, on macOS, a launchd agent that runs a full sweep every 4 hours
 
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `SKILL.md` | Skill definition — step-by-step setup with user prompts |
-| `convert-sessions.js` | Conversion script (bulk + `--session` modes) |
-| `hook.js` | PreCompact/SessionEnd/SessionStart hook — converts session, restores context, updates qmd index |
-| `lib.js` | Shared utilities: config, pgrep guard, qmd update+embed, session file lookup, turn extraction |
+| `convert-sessions.js` | Conversion script (bulk + `--session` modes); bulk mode also sweeps Desktop cowork transcripts |
+| `hook.js` | PreCompact/SessionEnd/SessionStart hook — converts session, restores context, detaches qmd index update |
+| `scheduled-refresh.js` | launchd-driven full refresh: bulk convert (incl. cowork) → `qmd update` → `qmd embed` |
+| `lib.js` | Shared utilities: config (with `~` expansion), pgrep guard, qmd update+embed, session file lookup, turn extraction |
 | `refresh.js` | Outputs CLAUDE.md files + recent turns from multiple sessions to stdout |
-| `config.json` | Persisted output directory + `loadContextOnStartup` flag |
+| `launchd/com.qmd-sessions.refresh.plist.template` | macOS launchd agent template (placeholders filled in at install) |
+| `config.json` | Persisted output directory + `loadContextOnStartup` flag (git-ignored) |
 
 ## Usage
 
@@ -51,12 +54,38 @@ The setup wizard walks through interactively: output directory, conversion, veri
 
 Four Claude Code hooks keep the index current and restore context (configured in `~/.claude/settings.json`):
 
-- **PreCompact** — converts session before context compaction, runs `qmd update && qmd embed`
-- **SessionEnd** — converts session on exit, runs `qmd update && qmd embed`
+- **PreCompact** — converts session before context compaction, then detaches `qmd update && qmd embed`
+- **SessionEnd** — converts session on exit, then detaches `qmd update && qmd embed`
 - **SessionStart (compact/resume/clear)** — converts the session, then outputs both CLAUDE.md files and the last ~50 exchanges (from multiple recent sessions, sorted by cwd match, capped at 14,000 characters) to stdout so Claude receives instructions and conversation context after compaction.
 - **SessionStart (startup)** — outputs CLAUDE.md files to stdout. If `loadContextOnStartup` is enabled in config.json, also outputs the last ~50 exchanges (same as compact/resume/clear, but without session conversion).
 
-All hooks use `pgrep -f "qmd.*embed"` to skip embed if another session's embed is already running.
+The convert step is synchronous, but PreCompact/SessionEnd **detach** `qmd update && qmd embed` (`spawn(detached).unref()`) so the hook returns before Claude Code's ~60s hook timeout can kill a long embed. All hooks first check `pgrep -f "qmd.*embed"` and skip embed if another session's embed is already running; the next embed catches pending hashes.
+
+Hooks only ever convert the **current terminal session** — they never see Desktop cowork transcripts, and a long/resumed session's later turns aren't re-swept until a full refresh runs (see below).
+
+## Background refresh (macOS)
+
+The per-session hooks leave two gaps: Desktop app **cowork** transcripts (the hooks never fire for them) and **long/resumed sessions** whose output froze at a partial state. A launchd agent closes both by running `scheduled-refresh.js` every 4 hours: a full bulk convert (incl. cowork) → `qmd update` → `qmd embed`. It's idempotent and `pgrep`-gated, so idle runs are cheap and it won't collide with a live-session embed.
+
+Install is offered by the setup wizard (Step 4i) on macOS, or manually:
+
+```bash
+mkdir -p ~/Library/LaunchAgents ~/Library/Logs
+sed -e "s|__NODE__|$(which node)|" \
+    -e "s|__SKILL_DIR__|$HOME/.claude/skills/qmd-sessions|" \
+    -e "s|__HOME__|$HOME|g" \
+    ~/.claude/skills/qmd-sessions/launchd/com.qmd-sessions.refresh.plist.template \
+  > ~/Library/LaunchAgents/com.qmd-sessions.refresh.plist
+launchctl load ~/Library/LaunchAgents/com.qmd-sessions.refresh.plist
+```
+
+Trigger a one-off full reparse on demand (also the way to force a catch-up):
+
+```bash
+launchctl start com.qmd-sessions.refresh
+```
+
+Logs: `~/Library/Logs/qmd-sessions-refresh.log`. On Linux, run `scheduled-refresh.js` from a cron job or systemd timer instead.
 
 ## Prerequisites
 
@@ -161,3 +190,5 @@ Same output as SessionStart hook.
 Used to manually load context
 in a fresh session (startup).
 ```
+
+> **Note:** the diagram shows the core per-session flow. Two later changes aren't drawn: (1) `updateQmd()` now **detaches** `qmd update && qmd embed` (skipping if an embed is already running) so the hook returns before Claude Code's ~60s timeout; (2) bulk conversion also sweeps Desktop **cowork** transcripts, and on macOS a **launchd** agent runs the full sweep every 4 hours — see [Background refresh](#background-refresh-macos).
