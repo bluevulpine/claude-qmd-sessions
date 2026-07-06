@@ -20,6 +20,18 @@ function isDirectory (p) {
   try { return fs.statSync(p).isDirectory() } catch (e) { return false }
 }
 
+// True if the source transcript is newer than its converted output (or if
+// either can't be stat'd). Used to re-convert in bulk mode when a session has
+// grown since it was last exported — e.g. long or resumed cowork sessions,
+// which have no SessionEnd hook to force a --session overwrite.
+function outIsStale (sourceFile, outFile) {
+  try {
+    return fs.statSync(sourceFile).mtimeMs > fs.statSync(outFile).mtimeMs
+  } catch (e) {
+    return true
+  }
+}
+
 function slugify (s) {
   if (!s) return ''
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60)
@@ -232,8 +244,9 @@ function convertSession (dirPath, file, project, titleHint) {
   const outFile = path.join(outDir, date + '-' + slug + '-' + fileId + '.md')
 
   // In --session mode, always overwrite (session is still growing)
-  // In bulk mode, skip if output already exists (idempotent)
-  if (!SESSION_ID && fs.existsSync(outFile)) return 'skipped'
+  // In bulk mode, skip only if the output exists and is at least as new as the
+  // source; re-convert when the transcript has grown since the last export
+  if (!SESSION_ID && fs.existsSync(outFile) && !outIsStale(sessionFile, outFile)) return 'skipped'
 
   // Full parse only when we need to write
   const data = processJsonl(sessionFile, false)
@@ -283,8 +296,8 @@ function convertSubagents (dirPath, sessionDirName, project) {
     const agentDate = agentData.meta.date || 'unknown'
     const outFile = path.join(outDir, agentDate + '-' + parentSlug + '-sub-' + agentShortId + '.md')
 
-    // In --session mode, always overwrite; in bulk mode, skip existing
-    if (!SESSION_ID && fs.existsSync(outFile)) {
+    // In --session mode, always overwrite; in bulk mode, skip only if up to date
+    if (!SESSION_ID && fs.existsSync(outFile) && !outIsStale(agentFile, outFile)) {
       result.skipped++
       continue
     }
