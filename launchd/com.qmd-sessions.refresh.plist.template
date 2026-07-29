@@ -37,9 +37,9 @@
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
 
-    <!-- Run every 4 hours. Idle runs are cheap: nothing new means no re-embed. -->
+    <!-- Run every 1 hour. Idle runs are cheap: nothing new means no re-embed. -->
     <key>StartInterval</key>
-    <integer>14400</integer>
+    <integer>3600</integer>
 
     <!-- Don't fire on every login; the interval handles cadence. -->
     <key>RunAtLoad</key>
