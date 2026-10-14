@@ -55,11 +55,20 @@ function runUpdateAndEmbed () {
 
 function cwdToProject (cwd, outputDir) {
   if (!cwd || !outputDir) return null
-  const cwdDashed = cwd.replace(/\//g, '-')
   let dirs
   try { dirs = fs.readdirSync(outputDir) } catch (e) { return null }
-  for (let i = 0; i < dirs.length; i++) {
-    if (cwdDashed.endsWith(dirs[i])) return dirs[i]
+  // Try the cwd itself, then its parent repo when the cwd is a
+  // .claude/worktrees/<name> checkout: a fresh worktree has no exports of
+  // its own yet, and the parent repo's recent sessions are the context it
+  // wants, not whichever unrelated project happens to sort first.
+  const candidates = [cwd]
+  const parent = cwd.replace(/\/\.claude\/worktrees\/[^/]+(\/.*)?$/, '')
+  if (parent !== cwd) candidates.push(parent)
+  for (let c = 0; c < candidates.length; c++) {
+    const dashed = candidates[c].replace(/\//g, '-')
+    for (let i = 0; i < dirs.length; i++) {
+      if (dashed.endsWith(dirs[i])) return dirs[i]
+    }
   }
   return null
 }
@@ -108,7 +117,11 @@ function collectRecentTurns (outputDir, cwd, maxTurns, maxChars) {
   }
 
   currentProject.sort().reverse()
-  otherProjects.sort().reverse()
+  // Export names start with YYYY-MM-DD, so ordering by basename is date
+  // order across projects. Sorting the full path ordered by directory name
+  // instead, so "worktrees-*" always beat everything else. mtime is not
+  // usable here: iCloud and Syncthing rewrite it.
+  otherProjects.sort(function (a, b) { return path.basename(b).localeCompare(path.basename(a)) })
   const sorted = currentProject.concat(otherProjects)
 
   const collected = []
