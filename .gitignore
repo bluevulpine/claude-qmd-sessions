@@ -1,1 +1,4 @@
 config.json
+timing.log
+.DS_Store
+.serena/
