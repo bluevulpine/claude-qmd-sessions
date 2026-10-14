@@ -80,6 +80,11 @@ function collectRecentTurns (outputDir, cwd, maxTurns, maxChars) {
       if (stat.isDirectory()) {
         walk(full)
       } else if (entries[i].endsWith('.md') && entries[i].indexOf('sub') === -1) {
+        // Skip iCloud-evicted ("dataless") exports: full size, zero allocated
+        // blocks. A read on one blocks in the kernel until iCloud downloads
+        // it, which the hook timeout cannot interrupt; 64 of 115 SessionStart
+        // runs stalled this way with ~/Documents under "Optimize Mac Storage".
+        if (stat.size > 0 && stat.blocks === 0) continue
         files.push(full)
       }
     }
