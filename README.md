@@ -192,3 +192,7 @@ in a fresh session (startup).
 ```
 
 > **Note:** the diagram shows the core per-session flow. Two later changes aren't drawn: (1) `updateQmd()` now **detaches** `qmd update && qmd embed` (skipping if an embed is already running) so the hook returns before Claude Code's ~60s timeout; (2) bulk conversion also sweeps Desktop **cowork** transcripts, and on macOS a **launchd** agent runs the full sweep every 4 hours — see [Background refresh](#background-refresh-macos).
+
+## Contributing
+
+Commit messages use [Scoped Commits](https://scopedcommits.com/): `<scope>: <description>`, where the scope is the file or area touched (`hook`, `lib`, `convert`, `launchd`, `README`). No `feat:`/`fix:`/`chore:` type prefixes; older history predates this.
